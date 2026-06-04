@@ -1,5 +1,6 @@
 ## 概要
-CUI上でマインスイーパーを遊ぶことができます。
+CUI上でマインスイーパーを遊ぶことができます。Windows / Mac 両対応です。
+
 通常のマインスイーパーに加えて、マインスイーパーに更に一つルールを追加した特殊モードを遊ぶことも可能です。
 現在、以下の2種類のルールを追加することが出来ます。
 - **Triplet**：地雷が縦・横・斜めに三連続で並ばない
@@ -8,11 +9,11 @@ CUI上でマインスイーパーを遊ぶことができます。
 ## デモプレイ
 ↓Windowsでの動作
 
-<video src="./sample.mov" controls width="100%"></video>
+<video src="./images-videos/minesweeper_win.mp4" controls width="100%"></video>
 
 ↓Macでの動作
 
-<video src="./minesweeper.mov" controls width="100%"></video>
+<video src="./images-videos/minesweeper_mac.mov" controls width="100%"></video>
 
 ## 操作方法
 - 矢印キー：カーソルの移動
@@ -23,5 +24,3 @@ CUI上でマインスイーパーを遊ぶことができます。
 
 ## 実行方法
 `minesweeper.cpp` を実行することでマインスイーパーを遊ぶことができます（C++ の実行環境が必要です）。
-
-Windows / Mac で動作確認を行なっております。
