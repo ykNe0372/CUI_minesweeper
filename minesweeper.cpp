@@ -110,7 +110,10 @@ void DisableRawMode();
 #endif
 
 void Console::Init() {
-#ifndef _WIN32
+#ifdef _WIN32
+	SetConsoleCP(CP_UTF8);
+	SetConsoleOutputCP(CP_UTF8);
+#else
     EnableRawMode();
 #endif
 }
@@ -159,7 +162,6 @@ void Console::ResetColor() {
 }
 
 #ifndef _WIN32
-
 void EnableRawMode() {
 	tcgetattr(STDIN_FILENO, &originalTermios);
 	termios raw = originalTermios;
