@@ -2,14 +2,20 @@
 #include <vector>
 #include <random>
 #include <iomanip>
-#include <conio.h>
 #include <stdlib.h>
-#include <Windows.h>
 #include "PoolAllocator.h"
+
+#ifdef _WIN32
+#include <conio.h>
+#include <Windows.h>
+#else
+#include <termios.h>
+#include <unistd.h>
+#include <cstdio>
+#endif
 
 using namespace std;
 
-// 型定義
 enum class CellState {
 	CLOSED,
 	OPENED,
@@ -20,6 +26,21 @@ class Cell {
 public:
 	CellState state = CellState::CLOSED;
 	bool isFlagged = false;
+};
+
+enum class InputKey {
+	None,
+	Up,
+	Down,
+	Left,
+	Right,
+	Space,
+	Flag,
+	Digit1,
+	Digit2,
+	Digit3,
+	Digit0,
+	CtrlC
 };
 
 enum class GameMode {
@@ -36,9 +57,18 @@ enum class GameState {
 	EXITING
 };
 
-// Gameクラス定義
-class Game
-{
+class Console {
+public:
+	static void Init();
+	static void Restore();
+	static InputKey ReadKey();
+	static void Clear();
+	static void MoveCursorTop();
+	static void SetColor(int fg, int bg = -1);
+	static void ResetColor();
+};
+
+class Game {
 public:
 	Game(int size, int bombs, GameMode mode);
 	~Game();
@@ -71,37 +101,170 @@ private:
 	bool isFirstOpen;
 };
 
-// ===========================
+// xxxxx----------
 
-Game::Game(int size, int bombs, GameMode mode)
-	: size(size), bombs(bombs), gameMode(mode), board(size, vector<Cell*>(size, nullptr)),
-	gameState(GameState::INITIALIZING), cursorX(0), cursorY(0), openedCells(0), isFirstOpen(true)
-{
+#ifndef _WIN32
+static termios originalTermios;
+void EnableRawMode();
+void DisableRawMode();
+#endif
+
+void Console::Init() {
+#ifdef _WIN32
+	SetConsoleCP(CP_UTF8);
+	SetConsoleOutputCP(CP_UTF8);
+#else
+    EnableRawMode();
+#endif
 }
 
-Game::~Game()
-{
+void Console::Restore() {
+#ifndef _WIN32
+    DisableRawMode();
+#endif
+}
+
+void Console::Clear() {
+#ifdef _WIN32
+    system("cls");
+#else
+    cout << "\x1b[2J\x1b[H";
+#endif
+}
+
+void Console::MoveCursorTop() {
+#ifndef _WIN32
+    cout << "\x1b[H";
+#endif
+}
+
+void Console::SetColor(int fg, int bg) {
+#ifndef _WIN32
+    if (fg < 0 && bg < 0) return;
+    cout << "\x1b[";
+    bool first = true;
+    if (fg >= 0) {
+        cout << (30 + fg);
+        first = false;
+    }
+    if (bg >= 0) {
+        if (!first) cout << ";";
+        cout << (40 + bg);
+    }
+    cout << "m";
+#endif
+}
+
+void Console::ResetColor() {
+#ifndef _WIN32
+    cout << "\x1b[0m";
+#endif
+}
+
+#ifndef _WIN32
+void EnableRawMode() {
+	tcgetattr(STDIN_FILENO, &originalTermios);
+	termios raw = originalTermios;
+	raw.c_lflag &= ~(ECHO | ICANON);
+	raw.c_cc[VMIN] = 1;
+	raw.c_cc[VTIME] = 0;
+	tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
+
+void DisableRawMode() {
+	tcsetattr(STDIN_FILENO, TCSAFLUSH, &originalTermios);
+}
+#endif
+
+// xxxxx----------
+
+InputKey Console::ReadKey() {
+#ifdef _WIN32
+	int c = _getch();
+	if (c == 3) return InputKey::CtrlC;
+	if (c == 224) {		// 特殊キー
+		int d = _getch();
+		switch (d) {
+			case 72: return InputKey::Up;
+			case 80: return InputKey::Down;
+			case 75: return InputKey::Left;
+			case 77: return InputKey::Right;
+		}
+	}
+
+	switch (c) {
+		case 'f': case 'F': return InputKey::Flag;
+		case ' ': return InputKey::Space;
+		case '1': return InputKey::Digit1;
+		case '2': return InputKey::Digit2;
+		case '3': return InputKey::Digit3;
+		case '0': return InputKey::Digit0;
+	}
+
+	return InputKey::None;
+#else
+	// ANSI エスケープシーケンス
+	char buf[3];
+	if (read(STDIN_FILENO, &buf[0], 1) != 1) return InputKey::None;
+	if (buf[0] == '\x03') return InputKey::CtrlC;
+	
+	if (buf[0] == '\x1b') {		// ESC
+		if (read(STDIN_FILENO, &buf[1], 1) != 1) return InputKey::None;
+		if (read(STDIN_FILENO, &buf[2], 1) != 1) return InputKey::None;
+		if (buf[1] == '[') {
+			switch (buf[2]) {
+				case 'A': return InputKey::Up;
+				case 'B': return InputKey::Down;
+				case 'C': return InputKey::Right;
+				case 'D': return InputKey::Left;
+			}
+		}
+		return InputKey::None;
+	}
+
+	switch (buf[0]) {
+		case 'f': case 'F': return InputKey::Flag;
+		case ' ': return InputKey::Space;
+		case '1': return InputKey::Digit1;
+		case '2': return InputKey::Digit2;
+		case '3': return InputKey::Digit3;
+		case '0': return InputKey::Digit0;
+	}
+
+	return InputKey::None;
+#endif
+}
+
+// xxxxx----------
+
+Game::Game(int size, int bombs, GameMode mode)
+	: size(size), bombs(bombs), gameMode(mode), board(size, vector<Cell*>(size, nullptr)), gameState(GameState::INITIALIZING), cursorX(0), cursorY(0), openedCells(0), isFirstOpen(true) {}
+
+Game::~Game() {
 	CleanupGame();
 }
 
-void Game::Run()
-{
+void Game::Run() {
 	bool keepPlaying = true;
-	while (keepPlaying)
-	{
+	while (keepPlaying) {
 		cout << "ゲームモード選択:\n";
-		cout << "1: Vanilla: 特殊ルール無し\n"; // V
-		cout << "2: Triplet: 地雷は、縦横斜めに3連続に並ばない\n"; // 1T
+		cout << "1: Vanilla: 特殊ルール無し\n"; 									   // V
+		cout << "2: Triplet: 地雷は、縦横斜めに3連続に並ばない\n"; 					   // 1T
 		cout << "3: Cross:   手がかりの数字は、半径2の十字範囲にある地雷の数を表す\n"; // 1X
 		cout << "遊びたいルールの数字を入力してください: ";
-		int mode_choice = 0;
-		while (mode_choice != '1' && mode_choice != '2' && mode_choice != '3') mode_choice = _getch();
-		cout << (char)mode_choice << "\n";
+		InputKey mode_choice = InputKey::None;
+		while (mode_choice != InputKey::Digit1 && mode_choice != InputKey::Digit2 && mode_choice != InputKey::Digit3) mode_choice = Console::ReadKey();
+		
+		char mode_char = '1';
+		if (mode_choice == InputKey::Digit2) mode_char = '2';
+		else if (mode_choice == InputKey::Digit3) mode_char = '3';
+		cout << mode_char << "\n";
 
 		switch (mode_choice) {
-			case '1': this->gameMode = GameMode::VANILLA; break;
-			case '2': this->gameMode = GameMode::TRIPLET; break;
-			case '3': this->gameMode = GameMode::CROSS; break;
+			case InputKey::Digit1: this->gameMode = GameMode::VANILLA; break;
+			case InputKey::Digit2: this->gameMode = GameMode::TRIPLET; break;
+			case InputKey::Digit3: this->gameMode = GameMode::CROSS; break;
+			default: break;
 		}
 
 		InitializeGame();
@@ -112,15 +275,15 @@ void Game::Run()
 
 		ShowResult();
 
-		cout << "もう一度マインスイーパーを遊びますか? (1: Yes, 0: No): ";
+		cout << "もう一度マインスイーパーを遊びますか? (1: Yes, 0: No): " << flush;  // バッファに残ったままにならないようにフラッシュ
 		while (true) {
-			int choice = _getch();
-			if (choice == '0') {
+			InputKey choice = Console::ReadKey();
+			if (choice == InputKey::Digit0) {
 				cout << "0\n";
 				keepPlaying = false;
 				break;
 			}
-			else if (choice == '1') {
+			else if (choice == InputKey::Digit1) {
 				cout << "1\n";
 				break;
 			}
@@ -128,25 +291,22 @@ void Game::Run()
 	}
 }
 
-void Game::InitializeGame()
-{
+void Game::InitializeGame() {
 	CleanupGame(); // 前のゲームのメモリを解放
 	for (int x = 0; x < size; ++x) {
-		for (int y = 0; y < size; ++y) {
-			board[x][y] = new (cellPool.Alloc()) Cell();
-		}
+		for (int y = 0; y < size; ++y) board[x][y] = new (cellPool.Alloc()) Cell();
 	}
+
 	cursorX = 0;
 	cursorY = 0;
 	openedCells = 0;
 	isFirstOpen = true;
 	gameState = GameState::PLAYING;
 
-	system("cls"); // 表示をクリア
+	Console::Clear(); // 表示をクリア
 }
 
-void Game::CleanupGame()
-{
+void Game::CleanupGame() {
 	for (int x = 0; x < size; ++x) {
 		for (int y = 0; y < size; ++y) {
 			if (board[x][y] != nullptr) {
@@ -157,8 +317,7 @@ void Game::CleanupGame()
 	}
 }
 
-void Game::GameLoop()
-{
+void Game::GameLoop() {
 	while (gameState == GameState::PLAYING) {
 		Render();
 		HandleInput();
@@ -166,31 +325,24 @@ void Game::GameLoop()
 	}
 }
 
-void Game::HandleInput()
-{
-	int key = _getch();
+void Game::HandleInput() {
+	InputKey key = Console::ReadKey();
 
-	if (key == 3) { // Ctrl+C
+	if (key == InputKey::CtrlC) {
 		gameState = GameState::EXITING;
 		return;
 	}
 
-	if (key == 224) { // 矢印などの特殊キー
-		key = _getch();
-		switch (key) {
-		case 72: if (cursorX > 0) --cursorX; break;        // 上
-		case 80: if (cursorX < size - 1) ++cursorX; break; // 下
-		case 75: if (cursorY > 0) --cursorY; break;        // 左
-		case 77: if (cursorY < size - 1) ++cursorY; break; // 右
-		}
-	}
-	else if (key == ' ') { // Spaceキー
+	switch (key) {
+	case InputKey::Up: if (cursorX > 0) --cursorX; break;
+	case InputKey::Down: if (cursorX < size - 1) ++cursorX; break;
+	case InputKey::Left: if (cursorY > 0) --cursorY; break;
+	case InputKey::Right: if (cursorY < size - 1) ++cursorY; break;
+	case InputKey::Space: {
 		Cell* currentCell = board[cursorX][cursorY];
 
 		// 旗が立っているマスは開けない
-		if (currentCell->isFlagged) {
-			return;
-		}
+		if (currentCell->isFlagged) return;
 
 		// 初回のマスとその周囲8マスは確定で安全マス
 		if (isFirstOpen) {
@@ -200,31 +352,33 @@ void Game::HandleInput()
 
 		if (currentCell->state == CellState::BOMB) gameState = GameState::GAME_OVER;
 		else OpenCell(cursorX, cursorY);
+		break;
 	}
-	else if (key == 'f' || key == 'F') { // Fキーで旗を立てる/外す
+	case InputKey::Flag: {
 		Cell* currentCell = board[cursorX][cursorY];
-		if (currentCell->state != CellState::OPENED) {
-			currentCell->isFlagged = !currentCell->isFlagged;
-		}
+		if (currentCell->state != CellState::OPENED) currentCell->isFlagged = !currentCell->isFlagged;
+		break;
+	}
+	default:
+		break;
 	}
 }
 
-void Game::Update()
-{
+
+void Game::Update() {
 	// 開けられるところを全て開ければクリア
 	if (gameState == GameState::PLAYING && openedCells == size * size - bombs) gameState = GameState::GAME_CLEAR;
 }
 
-void Game::Render()
-{
-	// コンソールのハンドルを取得し、現在の文字属性を保存
-	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+void Game::Render() {
+#ifdef _WIN32
+	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);  // 標準出力コンソールのハンドルを取得
 	CONSOLE_SCREEN_BUFFER_INFO consoleInfo;
 	WORD saved_attributes;
-	GetConsoleScreenBufferInfo(hConsole, &consoleInfo);
-	saved_attributes = consoleInfo.wAttributes;
+	GetConsoleScreenBufferInfo(hConsole, &consoleInfo); // コンソール状態を取得
+	saved_attributes = consoleInfo.wAttributes;			// 現在の文字色・背景色などの属性を保存
 
-	// ちかちか (フリッカリング？とか言うらしい) を抑制
+	// ちかちか (フリッカリング) を抑制
 	COORD cursorCoord = {0, 0};
 	SetConsoleCursorPosition(hConsole, cursorCoord);
 
@@ -237,9 +391,64 @@ void Game::Render()
 			bool isCursor = (x == cursorX && y == cursorY);
 			bool isFinished = (gameState == GameState::GAME_OVER || gameState == GameState::GAME_CLEAR);
 
-			// 表示する文字を決定
 			char charToPrint;
-			int number = 0; // ヒントの数字を保持 (色付けのため)
+			int number = 0;
+			if (cell->state == CellState::OPENED) {
+				int count = CountAdjacentBombs(x, y);
+				if (count > 0) {
+					charToPrint = count + '0';
+					number = count;
+				}
+				else charToPrint = ' ';
+			}
+			else {
+				if (cell->isFlagged) charToPrint = '*';
+				else if (cell->state == CellState::BOMB && isFinished) charToPrint = 'X';
+				else charToPrint = '-';
+			}
+
+			WORD attributes = saved_attributes;
+			if (isCursor) attributes = (attributes & 0x0F) | BACKGROUND_BLUE | BACKGROUND_GREEN | BACKGROUND_RED;
+
+			if (number > 0) {
+				WORD color = 0;
+				switch (number) {
+					case 1: color = FOREGROUND_BLUE | FOREGROUND_INTENSITY; break;                      			   // 青
+					case 2: color = FOREGROUND_GREEN; break;                                         				   // 緑
+					case 3: color = FOREGROUND_RED | FOREGROUND_GREEN; break;                       				   // 黄
+					case 4: color = FOREGROUND_RED | FOREGROUND_BLUE | FOREGROUND_INTENSITY; break;   				   // 紫
+					case 5: color = FOREGROUND_RED | FOREGROUND_INTENSITY; break;                    				   // 赤
+					case 6: color = FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY; break; 				   // 水色
+					case 7: color = FOREGROUND_INTENSITY; break;                                    				   // 灰色
+					case 8: color = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY; break; // 白
+				}
+				attributes = (attributes & 0xF0) | color;
+			}
+			else if (cell->isFlagged) {
+				WORD color = FOREGROUND_RED | FOREGROUND_INTENSITY;
+				attributes = (attributes & 0xF0) | color;
+			}
+
+			SetConsoleTextAttribute(hConsole, attributes);
+			cout << charToPrint << " ";
+			SetConsoleTextAttribute(hConsole, saved_attributes);
+		}
+		cout << "\n";
+	}
+#else
+	Console::MoveCursorTop();
+
+	for (int i = 0; i < size; ++i) cout << "==";
+	cout << "\n";
+
+	for (int x = 0; x < size; ++x) {
+		for (int y = 0; y < size; ++y) {
+			Cell* cell = board[x][y];
+			bool isCursor = (x == cursorX && y == cursorY);
+			bool isFinished = (gameState == GameState::GAME_OVER || gameState == GameState::GAME_CLEAR);
+
+			char charToPrint;
+			int number = 0;
 			if (cell->state == CellState::OPENED) {
 				int count = CountAdjacentBombs(x, y);
 				if (count > 0) {
@@ -248,71 +457,53 @@ void Game::Render()
 				} else {
 					charToPrint = ' ';
 				}
-			}
-			else {
+			} else {
 				if (cell->isFlagged) charToPrint = '*';
 				else if (cell->state == CellState::BOMB && isFinished) charToPrint = 'X';
 				else charToPrint = '-';
 			}
 
-			// 文字色と背景色を設定
-			WORD attributes = saved_attributes;
-			if (isCursor) {
-				// カーソル位置は背景を白くする
-				attributes = (attributes & 0x0F) | BACKGROUND_BLUE | BACKGROUND_GREEN | BACKGROUND_RED;
-			}
-
-			if (number > 0) {
-				WORD color = 0;
+			if (isCursor) cout << "\x1b[47m\x1b[30m";    // 背景を白([47m)、文字を黒([30m)
+			else if (number > 0) {
 				switch (number) {
-					case 1: color = FOREGROUND_BLUE | FOREGROUND_INTENSITY; break;  // 1: 明るい青
-					case 2: color = FOREGROUND_GREEN; break;                        // 2: 緑
-					case 3: color = FOREGROUND_RED | FOREGROUND_GREEN; break;       // 3: オレンジ (暗い黄)
-					case 4: color = FOREGROUND_BLUE; break;                         // 4: 紺色
-					case 5: color = FOREGROUND_RED; break;                          // 5: 茶色 (暗い赤)
-					case 6: color = FOREGROUND_GREEN | FOREGROUND_BLUE; break;      // 6: シアン (暗い)
-					case 7: color = FOREGROUND_RED | FOREGROUND_BLUE; break;        // 7: 黒の代わりにマゼンタ
-					case 8: color = FOREGROUND_INTENSITY; break;                    // 8: 灰色
+					case 1: cout << "\x1b[34m"; break;	// 青
+					case 2: cout << "\x1b[32m"; break;	// 緑
+					case 3: cout << "\x1b[33m"; break;	// 黄色
+					case 4: cout << "\x1b[35m"; break;	// 紫
+					case 5: cout << "\x1b[31m"; break;	// 赤
+					case 6: cout << "\x1b[36m"; break;	// 水色
+					case 7: cout << "\x1b[90m"; break;	// 灰色
+					case 8: cout << "\x1b[37m"; break;	// 白
 				}
-				attributes = (attributes & 0xF0) | color; // 背景色を維持しつつ文字色を設定
 			}
-			else if (cell->isFlagged) {
-				WORD color = FOREGROUND_RED | FOREGROUND_INTENSITY; // 旗: 明るい赤
-				attributes = (attributes & 0xF0) | color;
-			}
+			else if (cell->isFlagged) cout << "\x1b[31m";
 
-			SetConsoleTextAttribute(hConsole, attributes);
 			cout << charToPrint << " ";
-			SetConsoleTextAttribute(hConsole, saved_attributes); // 次の描画のために属性を元に戻す
+			cout << "\x1b[0m";	// デフォルト
 		}
 		cout << "\n";
 	}
+#endif
 
 	for (int i = 0; i < size; ++i) cout << "==";
-	cout << "\n矢印キー: カーソル移動, Space: マスを開ける, f/F: 旗を立てる, Ctrl+C: 強制終了\n";
+	cout << "\n矢印キー: カーソル移動 Space: マスを開ける\nf/F: 旗を立てる・外す Ctrl+C: 強制終了\n\n";
 
 	int totalSafeCells = size * size - bombs;
 	int remainingSafeCells = totalSafeCells - openedCells;
-	// 数字が2桁->1桁になるときに表示が崩れるのを防ぐため、setwで表示幅を固定します。
-	// 例: " 9/75" のように、1桁の数字の前にスペースが自動で挿入されます。
 	cout << "残り安全マス: " << setw(2) << remainingSafeCells << "/" << totalSafeCells << " \n";
 }
 
-void Game::ShowResult()
-{
+void Game::ShowResult() {
 	Render(); // 最終盤面を描画
-	if (gameState == GameState::GAME_CLEAR) {
-		cout << "CLEAR!\n";
-	} else if (gameState == GameState::GAME_OVER) {
-		cout << "GAME OVER\n";
-	}
+
+	if (gameState == GameState::GAME_CLEAR) cout << "CLEAR!\n";
+	else if (gameState == GameState::GAME_OVER) cout << "GAME OVER\n";
 }
 
-void Game::PlaceBombs(int firstOpenX, int firstOpenY)
-{
+void Game::PlaceBombs(int firstOpenX, int firstOpenY) {
 	random_device rd;
 	mt19937 gen(rd());
-	uniform_int_distribution<> dist(0, size - 1);
+	uniform_int_distribution<> dist(0, size - 1);	// 等確率に選ぶ
 
 	for (int i = 0; i < bombs; ++i) {
 		int x = dist(gen);
@@ -322,17 +513,14 @@ void Game::PlaceBombs(int firstOpenX, int firstOpenY)
 		bool isExistingBomb = board[x][y]->state == CellState::BOMB;			   // 既に設置済みのマス
 
 		bool violatesRule = false;
-		if (gameMode == GameMode::TRIPLET) {
-			violatesRule = Triplet(x, y);
-		}
+		if (gameMode == GameMode::TRIPLET) violatesRule = Triplet(x, y);
 
-		if (isForbidden || isExistingBomb || violatesRule) i--; // 置けなかったら再試行
+		if (isForbidden || isExistingBomb || violatesRule) --i; // 置けなかったら再試行
 		else board[x][y]->state = CellState::BOMB;
 	}
 }
 
-void Game::OpenCell(int x, int y)
-{
+void Game::OpenCell(int x, int y) {
 	if (x < 0 || x >= size || y < 0 || y >= size || board[x][y]->state != CellState::CLOSED) return;
 	board[x][y]->state = CellState::OPENED;
 	++openedCells;
@@ -348,8 +536,7 @@ void Game::OpenCell(int x, int y)
 	}
 }
 
-int Game::CountAdjacentBombs(int x, int y)
-{
+int Game::CountAdjacentBombs(int x, int y) {
 	int count = 0;
 
 	if (gameMode == GameMode::CROSS) {
@@ -374,16 +561,13 @@ int Game::CountAdjacentBombs(int x, int y)
 	return count;
 }
 
-bool Game::IsBomb(int x, int y) const
-{
-	if (x < 0 || x >= size || y < 0 || y >= size) {
-		return false;
-	}
+bool Game::IsBomb(int x, int y) const {
+	if (x < 0 || x >= size || y < 0 || y >= size) return false;
+
 	return board[x][y]->state == CellState::BOMB;
 }
 
-bool Game::Triplet(int x, int y) const
-{
+bool Game::Triplet(int x, int y) const {
 	// 4方向（横、縦、右下がり、右上がり）をチェック
 	const int directions[4][2] = {{1, 0}, {0, 1}, {1, 1}, {1, -1}};
 
@@ -391,22 +575,19 @@ bool Game::Triplet(int x, int y) const
 		int dx = dir[0];
 		int dy = dir[1];
 
-		// パターン1: [ここ] - [地雷] - [地雷]
-		if (IsBomb(x + dx, y + dy) && IsBomb(x + 2 * dx, y + 2 * dy)) return true;
-		// パターン2: [地雷] - [ここ] - [地雷]
-		if (IsBomb(x - dx, y - dy) && IsBomb(x + dx, y + dy)) return true;
-		// パターン3: [地雷] - [地雷] - [ここ]
-		if (IsBomb(x - 2 * dx, y - 2 * dy) && IsBomb(x - dx, y - dy)) return true;
+		if (IsBomb(x + dx, y + dy) && IsBomb(x + 2 * dx, y + 2 * dy)) return true;  // パターン1: [ここ] - [地雷] - [地雷]
+		if (IsBomb(x - dx, y - dy) && IsBomb(x + dx, y + dy)) return true;          // パターン2: [地雷] - [ここ] - [地雷]
+		if (IsBomb(x - 2 * dx, y - 2 * dy) && IsBomb(x - dx, y - dy)) return true;  // パターン3: [地雷] - [地雷] - [ここ]
 	}
 	return false;
 }
 
 // =====================================
 
-int main()
-{
-	// モード選択はRun()メソッド内
+int main() {
+	Console::Init();
 	Game minesweeper(10, 25, GameMode::VANILLA); // 初期モードはダミーとして渡す
 	minesweeper.Run();
+	Console::Restore();
 	return 0;
 }
