@@ -7,14 +7,7 @@ CUI上でマインスイーパーを遊ぶことができます。Windows / Mac 
 - **Cross**：地雷の探知範囲が周囲８マスから上下左右2マスずつの十字形になる 
 
 ## デモプレイ
-↓Windowsでの動作
-
-<video src="./images-videos/minesweeper_win.mp4" controls width="100%"></video>
-
-↓Macでの動作
-
-<video src="./images-videos/minesweeper_mac.mov" controls width="100%"></video>
-
+[動画で見る](https://drive.google.com/drive/folders/1XvVZyilrMICU7x-A67GtE5VaO9kUNVzv?usp=sharing) (Google Drive へ移動します)
 ## 操作方法
 - 矢印キー：カーソルの移動
 - Spaceキー：マスを開ける
